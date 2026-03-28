@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>過河謎題 - 自動動畫展示 (含錯誤回溯)</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f4f8; margin: 0; padding: 20px; text-align: center; }
+        h1 { color: #2c3e50; }
+        .container { max-width: 900px; margin: 0 auto; background: white; border-radius: 12px; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        
+        /* 河流與岸邊的場景設計 */
+        .scene { display: flex; align-items: stretch; justify-content: space-between; height: 250px; background: #87CEEB; border-radius: 8px; margin: 20px 0; overflow: hidden; position: relative; border: 4px solid #bdc3c7; }
+        .bank { width: 25%; background: #27ae60; padding: 10px; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 5px; z-index: 2; box-shadow: inset 0 0 20px rgba(0,0,0,0.3); }
+        .river { flex-grow: 1; background: #3498db; position: relative; display: flex; align-items: center; background-image: linear-gradient(rgba(255,255,255,0.2) 2px, transparent 2px); background-size: 100% 40px; }
+        
+        /* 角色與船隻 */
+        .char { background: white; border: 2px solid #333; border-radius: 5px; padding: 5px 8px; font-size: 14px; font-weight: bold; display: inline-block; box-shadow: 2px 2px 5px rgba(0,0,0,0.2); transition: all 0.3s ease; }
+        .boat { width: 120px; height: 60px; background: #8e44ad; border-radius: 10px 10px 40px 40px; position: absolute; left: 0%; top: 50%; transform: translateY(-50%); transition: left 1.5s ease-in-out; display: flex; justify-content: center; align-items: center; gap: 5px; padding-bottom: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.4); border: 3px solid #5e3370; }
+        .boat.right { left: calc(100% - 120px); }
+        
+        /* 控制區與日誌 */
+        .controls { margin-bottom: 20px; }
+        button { background: #e74c3c; color: white; border: none; padding: 12px 24px; font-size: 18px; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        button:hover { background: #c0392b; transform: scale(1.05); }
+        button:disabled { background: #95a5a6; cursor: not-allowed; transform: none; }
+        .log-box { background: #2c3e50; color: #ecf0f1; height: 180px; overflow-y: auto; text-align: left; padding: 15px; border-radius: 8px; font-family: monospace; font-size: 15px; line-height: 1.6; }
+        .log-entry { margin-bottom: 5px; border-bottom: 1px solid #34495e; padding-bottom: 5px; }
+        .log-error { color: #ff6b81; font-weight: bold; }
+        .log-success { color: #2ecc71; font-weight: bold; }
+        .log-backtrack { color: #f1c40f; font-style: italic; }
+
+        /* 錯誤警報特效 */
+        @keyframes flashRed {
+            0% { background-color: #3498db; }
+            50% { background-color: #e74c3c; }
+            100% { background-color: #3498db; }
+        }
+        .error-flash { animation: flashRed 0.8s 2; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🚣 過河謎題：自動動畫展示 (含回溯機制)</h1>
+    <div class="controls">
+        <button id="startBtn" onclick="startAnimation()">▶ 開始自動播放</button>
+    </div>
+
+    <div class="scene" id="scene">
+        <div class="bank" id="leftBank"></div>
+        <div class="river" id="river">
+            <div class="boat" id="boat"></div>
+        </div>
+        <div class="bank" id="rightBank"></div>
+    </div>
+
+    <div class="log-box" id="logBox">
+        <div class="log-entry">系統就緒。請點擊上方按鈕開始模擬。</div>
+    </div>
+</div>
+
+<script>
+    // 定義角色
+    const charsData = {
+        F: '👨 爸爸', M: '👩 媽媽', 
+        S1: '👦 兒1', S2: '👦 兒2', 
+        D1: '👧 女1', D2: '👧 女2', 
+        P: '💂 僕人', G: '🐕 狗'
+    };
+
+    // 狀態變數
+    let state = {
+        left: ['F', 'M', 'S1', 'S2', 'D1', 'D2', 'P', 'G'],
+        right: [],
+        boatPos: 'left' // 'left' 或 'right'
+    };
+
+    // 腳本：定義每一步要上船的人，以及是否故意觸發錯誤
+    const script = [
+        // ❌ 錯誤嘗試 1：爸爸帶女兒過河 (觸發爸爸打女兒)
+        { passengers: ['F', 'D1'], error: '⚠️ 錯誤：媽媽不在，爸爸會打女兒！任務失敗。' },
+        
+        // ✅ 正確開始 (15步解法)
+        { passengers: ['F', 'S1'] }, 
+        { passengers: ['F'] },       
+        { passengers: ['F', 'S2'] }, 
+        { passengers: ['F'] },       
+
+        // ❌ 錯誤嘗試 2：僕人自己過河 (觸發狗咬全家)
+        { passengers: ['P'], error: '⚠️ 錯誤：僕人不在，狗會咬傷所有家庭成員！任務失敗。' },
+
+        // ✅ 繼續正確步驟
+        { passengers: ['F', 'M'] },  
+        { passengers: ['M'] },       
+        { passengers: ['P', 'G'] },  
+        { passengers: ['F'] },       
+        { passengers: ['F', 'M'] },  
+        { passengers: ['M'] },       
+        { passengers: ['M', 'D1'] }, 
+        { passengers: ['P', 'G'] },  
+        { passengers: ['P', 'D2'] }, 
+        { passengers: ['P'] },       
+        { passengers: ['P', 'G'] }   
+    ];
+
+    let currentStep = 0;
+    let isPlaying = false;
+
+    // 渲染畫面
+    function render() {
+        document.getElementById('leftBank').innerHTML = state.left.map(c => `<div class="char" id="${c}">${charsData[c]}</div>`).join('');
+        document.getElementById('rightBank').innerHTML = state.right.map(c => `<div class="char" id="${c}">${charsData[c]}</div>`).join('');
+    }
+
+    // 新增日誌
+    function addLog(msg, type = '') {
+        const logBox = document.getElementById('logBox');
+        logBox.innerHTML += `<div class="log-entry ${type}">${msg}</div>`;
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    // 暫停輔助函數
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    // 開始動畫
+    async function startAnimation() {
+        if (isPlaying) return;
+        isPlaying = true;
+        document.getElementById('startBtn').disabled = true;
+        document.getElementById('logBox').innerHTML = '';
+        addLog('🚀 開始執行過河策略...', 'log-success');
+        render();
+
+        for (let move of script) {
+            await executeMove(move);
+        }
+
+        addLog('🎉 全員安全抵達！任務圓滿成功！', 'log-success');
+        document.getElementById('startBtn').innerText = '播放完畢';
+    }
+
+    // 執行單次移動 (包含動畫、錯誤檢查與回溯)
+    async function executeMove(move) {
+        const boatEle = document.getElementById('boat');
+        const riverEle = document.getElementById('river');
+        const fromArr = state.boatPos === 'left' ? state.left : state.right;
+        const toArr = state.boatPos === 'left' ? state.right : state.left;
+        const dirText = state.boatPos === 'left' ? '前往對岸 ➡️' : '⬅️ 返回起點';
+
+        // 1. 乘客上船
+        let passNames = move.passengers.map(p => charsData[p]).join('、');
+        addLog(`⛴️ 船隻啟動：[ ${passNames} ] ${dirText}`);
+        
+        move.passengers.forEach(p => {
+            fromArr.splice(fromArr.indexOf(p), 1);
+            boatEle.innerHTML += `<div class="char">${charsData[p]}</div>`;
+        });
+        render();
+        await sleep(500);
+
+        // 2. 船開動
+        if (state.boatPos === 'left') {
+            boatEle.classList.add('right');
+        } else {
+            boatEle.classList.remove('right');
+        }
+        await sleep(1500); // 等待 CSS transition 結束
+
+        // 3. 檢查是否有預設的錯誤
+        if (move.error) {
+            addLog(move.error, 'log-error');
+            riverEle.classList.add('error-flash');
+            await sleep(1600); // 閃爍效果時間
+            riverEle.classList.remove('error-flash');
+
+            addLog(`⏪ 觸發回溯機制：[ ${passNames} ] 退回原位`, 'log-backtrack');
+            
+            // 船開回去
+            if (state.boatPos === 'left') {
+                boatEle.classList.remove('right');
+            } else {
+                boatEle.classList.add('right');
+            }
+            await sleep(1500);
+
+            // 乘客下船回到原本的岸
+            boatEle.innerHTML = '';
+            move.passengers.forEach(p => fromArr.push(p));
+            render();
+            await sleep(1000);
+            return; // 結束這個錯誤的回合
+        }
+
+        // 4. 正確移動，乘客下船到新岸邊
+        boatEle.innerHTML = '';
+        move.passengers.forEach(p => toArr.push(p));
+        state.boatPos = state.boatPos === 'left' ? 'right' : 'left';
+        render();
+        await sleep(1000);
+    }
+
+    // 初始渲染
+    render();
+</script>
+</body>
+</html>
